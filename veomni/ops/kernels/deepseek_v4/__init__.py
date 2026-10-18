@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DeepSeek V4 model-specific SM90+ GPU kernels adapted from radixark/miles.
+"""DeepSeek V4 model-specific SM90+ / gfx950 GPU kernels adapted from radixark/miles.
 
 Imports stay inside the public wrappers because TileLang is an optional,
 GPU-only dependency. Importing VeOmni on CPU or NPU must not load it.
@@ -22,16 +22,36 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from ....utils.device import IS_CUDA_AVAILABLE, get_gpu_compute_capability
+from ....utils.device import IS_CUDA_AVAILABLE, get_gpu_compute_capability, get_rocm_gcn_arch
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+# AMD architectures on which TileLang's HIP backend has been validated for these kernels.
+TILELANG_ROCM_ARCHS = ("gfx950",)
+
+
+def is_tilelang_supported() -> bool:
+    if not IS_CUDA_AVAILABLE:
+        return False
+    if torch.version.hip is not None:
+        return get_rocm_gcn_arch() in TILELANG_ROCM_ARCHS
+    return get_gpu_compute_capability() >= 90
+
+
 def _require_tilelang_sm90() -> None:
-    if torch.version.hip is not None or not IS_CUDA_AVAILABLE or get_gpu_compute_capability() < 90:
-        raise RuntimeError("DeepSeek V4 TileLang kernels require an SM90 or later NVIDIA CUDA GPU")
+    if torch.version.hip is not None:
+        if not is_tilelang_supported():
+            raise RuntimeError(
+                f"DeepSeek V4 TileLang kernels on ROCm require an AMD {'/'.join(TILELANG_ROCM_ARCHS)} GPU"
+            )
+        return
+    if not IS_CUDA_AVAILABLE or get_gpu_compute_capability() < 90:
+        raise RuntimeError(
+            "DeepSeek V4 TileLang kernels require an SM90 or later NVIDIA CUDA GPU or an AMD gfx950 GPU"
+        )
 
 
 def sparse_attn_tilelang(
@@ -133,6 +153,7 @@ __all__ = [
     "act_quant",
     "fp4_act_quant",
     "fp8_weight_quant",
+    "is_tilelang_supported",
     "linear_bf16_fp32",
     "sparse_attn_tilelang",
     "sparse_mqa_target_fwd",

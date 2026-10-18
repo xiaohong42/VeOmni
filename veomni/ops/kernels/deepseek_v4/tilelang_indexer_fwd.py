@@ -24,6 +24,8 @@ import tilelang
 import torch
 from tilelang import language as T
 
+from ....utils.device import get_max_shared_memory_per_block
+
 
 @tilelang.jit(
     pass_configs={
@@ -176,8 +178,20 @@ def indexer_fwd_interface(q, kv, weights, cu_seqlen_ks, cu_seqlen_ke, clean_logi
     if padded_seq_len_kv != seq_len_kv:
         kv = torch.cat([kv, kv.new_zeros(padded_seq_len_kv - seq_len_kv, index_dim)], dim=0)
 
+    # Each pipeline stage holds its own K tile next to the single Q tile. Three stages
+    # (224 KB at index_dim=128) fit Hopper's 227 KB but not the 160 KB LDS of gfx950.
+    # The headroom covers TileLang's buffer alignment and the cross-warp reduction scratch.
+    q_tile_bytes = block_q * heads * index_dim * q.element_size()
+    k_tile_bytes = block_n * index_dim * kv.element_size()
+    smem_budget = get_max_shared_memory_per_block() - 8 * 1024
+    num_stages = 3
+    while num_stages > 1 and q_tile_bytes + num_stages * k_tile_bytes > smem_budget:
+        num_stages -= 1
+
     clean_logits_kernel = clean_logits_()
-    tl_indexer_fwd_kernel = tl_indexer_fwd_impl(heads=heads, index_dim=index_dim, block_N=block_n, block_Q=block_q)
+    tl_indexer_fwd_kernel = tl_indexer_fwd_impl(
+        heads=heads, index_dim=index_dim, block_N=block_n, num_stages=num_stages, block_Q=block_q
+    )
 
     logits = torch.empty([padded_seq_len, padded_seq_len_kv], device=q.device, dtype=torch.float32)
     tl_indexer_fwd_kernel(

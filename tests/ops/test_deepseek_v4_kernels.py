@@ -25,7 +25,7 @@ import torch.nn.functional as F
 import yaml
 
 from veomni.ops.kernels.deepseek_v4 import linear_bf16_fp32
-from veomni.utils.device import IS_CUDA_AVAILABLE, get_device_type, get_gpu_compute_capability
+from veomni.utils.device import IS_CUDA_AVAILABLE, get_device_type
 
 
 DEVICE = get_device_type()
@@ -67,6 +67,7 @@ def test_linear_bf16_fp32_backward_matches_reference():
 def test_tilelang_wrappers_reject_pre_sm90_before_import(monkeypatch):
     import veomni.ops.kernels.deepseek_v4 as kernels
 
+    monkeypatch.setattr(kernels.torch.version, "hip", None, raising=False)
     monkeypatch.setattr(kernels, "IS_CUDA_AVAILABLE", True)
     monkeypatch.setattr(kernels, "get_gpu_compute_capability", lambda: 89)
     args = (torch.empty(0),) * 4
@@ -81,30 +82,41 @@ def test_tilelang_wrappers_reject_pre_sm90_before_import(monkeypatch):
         kernels.fp8_weight_quant(torch.empty(0))
 
 
-def test_tilelang_wrappers_reject_rocm_before_import(monkeypatch):
+def test_tilelang_wrappers_reject_unvalidated_rocm_arch_before_import(monkeypatch):
     import veomni.ops.kernels.deepseek_v4 as kernels
 
     monkeypatch.setattr(kernels.torch.version, "hip", "6.0", raising=False)
     monkeypatch.setattr(kernels, "IS_CUDA_AVAILABLE", True)
-    monkeypatch.setattr(kernels, "get_gpu_compute_capability", lambda: 90)
+    monkeypatch.setattr(kernels, "get_rocm_gcn_arch", lambda: "gfx90a")
     args = (torch.empty(0),) * 4
 
-    with pytest.raises(RuntimeError, match="NVIDIA CUDA"):
+    with pytest.raises(RuntimeError, match="gfx950"):
         kernels.sparse_attn_tilelang(*args)
-    with pytest.raises(RuntimeError, match="NVIDIA CUDA"):
+    with pytest.raises(RuntimeError, match="gfx950"):
         kernels.v4_lighting_indexer(*args[:3], compress_ratio=1, topk=1)
-    with pytest.raises(RuntimeError, match="NVIDIA CUDA"):
+    with pytest.raises(RuntimeError, match="gfx950"):
         kernels.act_quant(torch.empty(0))
-    with pytest.raises(RuntimeError, match="NVIDIA CUDA"):
+    with pytest.raises(RuntimeError, match="gfx950"):
         kernels.fp8_weight_quant(torch.empty(0))
+
+
+def test_tilelang_support_follows_rocm_arch(monkeypatch):
+    import veomni.ops.kernels.deepseek_v4 as kernels
+
+    monkeypatch.setattr(kernels.torch.version, "hip", "6.0", raising=False)
+    monkeypatch.setattr(kernels, "IS_CUDA_AVAILABLE", True)
+    monkeypatch.setattr(kernels, "get_rocm_gcn_arch", lambda: "gfx950")
+    assert kernels.is_tilelang_supported()
+    monkeypatch.setattr(kernels, "get_rocm_gcn_arch", lambda: "gfx942")
+    assert not kernels.is_tilelang_supported()
 
 
 def _require_tilelang_cuda():
     pytest.importorskip("tilelang")
-    if torch.version.hip is not None or not IS_CUDA_AVAILABLE:
-        pytest.skip("DeepSeek V4 TileLang kernels require an NVIDIA CUDA GPU")
-    if get_gpu_compute_capability() < 90:
-        pytest.skip("DeepSeek V4 TileLang kernels require SM90 or later")
+    from veomni.ops.kernels.deepseek_v4 import is_tilelang_supported
+
+    if not is_tilelang_supported():
+        pytest.skip("DeepSeek V4 TileLang kernels require an SM90+ NVIDIA GPU or an AMD gfx950 GPU")
 
 
 def _indexer_reference(q, k, weights, topk_indices):
@@ -259,7 +271,10 @@ def test_tilelang_sparse_attention_forward_pipelines_the_gather_without_changing
 
     pipelined = sparse_mqa_fwd(heads, dim, topk, scale, num_stages=1)
     serial = sparse_mqa_fwd(heads, dim, topk, scale, num_stages=0)
-    assert "cp_async_gs" in pipelined.get_kernel_source()
+    # TileLang's HIP backend does not lower this indexed gather to an async copy, so on
+    # ROCm a pipelined gather is only multi-buffered and there is no async copy to find.
+    if torch.version.hip is None:
+        assert "cp_async_gs" in pipelined.get_kernel_source()
     assert "cp_async_gs" not in serial.get_kernel_source()
 
     expected_out, expected_lse = serial(q, kv, sinks, indices)
@@ -268,7 +283,12 @@ def test_tilelang_sparse_attention_forward_pipelines_the_gather_without_changing
         sparse_mqa_fwd_interface(q, kv, sinks, indices, scale, num_stages=1),
     ):
         assert torch.equal(out, expected_out)
-        assert torch.equal(lse, expected_lse)
+        if torch.version.hip is None:
+            assert torch.equal(lse, expected_lse)
+        else:
+            # The interface pads 8 heads to 16, and on gfx950 that kernel rounds the odd
+            # LSE one ulp differently from the 8-head one.
+            torch.testing.assert_close(lse, expected_lse, rtol=1e-6, atol=0)
 
     # The depth is bounded by shared memory, so it is derived from the device rather than
     # left to surface as an opaque launch failure. Walk the depth up until the guard
@@ -487,6 +507,12 @@ def test_deepseek_v4_generated_attention_dispatch_matches_eager():
         assert weights is None
         torch.testing.assert_close(actual.float(), expected.float(), rtol=2e-2, atol=2e-2)
 
+        # The kernel's dtype contract is enforced rather than silently routed to eager.
+        with pytest.raises(ValueError, match="requires bfloat16"):
+            modeling.eager_attention_forward(
+                module, query.float(), key.float(), key.float(), causal_mask, dim**-0.5, dropout=0.0
+            )
+        modeling.veomni_dsa_attention_implementation.bind(SimpleNamespace(dsa_attention_implementation="eager"))
         fp32_output, fp32_weights = modeling.eager_attention_forward(
             module, query.float(), key.float(), key.float(), causal_mask, dim**-0.5, dropout=0.0
         )
@@ -554,6 +580,11 @@ def test_deepseek_v4_generated_indexer_dispatch_and_position_fallback(monkeypatc
         assert packed_kwargs["cu_seqlen_ke"][-1] == 2 * expected_topk
         assert packed_indices.shape == (1, 2 * seq_len, 2 * expected_topk)
 
+        # Non-canonical positions are refused instead of silently falling back to eager.
+        with pytest.raises(ValueError, match="does not support this call"):
+            indexer(hidden_states, q_residual, canonical_positions + 1, None, 0)
+        assert len(calls) == 2
+        modeling.veomni_dsa_indexer_implementation.bind(SimpleNamespace(dsa_indexer_implementation="eager"))
         eager_indices = indexer(hidden_states, q_residual, canonical_positions + 1, None, 0)
         assert len(calls) == 2
         assert eager_indices.shape == tilelang_indices.shape

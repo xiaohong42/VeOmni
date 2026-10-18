@@ -29,6 +29,11 @@ from tilelang import language as T
 # KV length granularity these kernels are specialized on; see sparse_mqa_bwd_interface.
 KV_BLOCK = 1024
 
+# Head tile of the backward CTA. On gfx950 a 64-head tile does not fit the 160 KB LDS
+# and the 32-head tile computes a wrong dKV, so ROCm splits heads into 16-wide tiles,
+# which the kernel already supports by accumulating dKV across tiles atomically.
+MAX_BLOCK_H = 16 if torch.version.hip is not None else 64
+
 
 def cta_threads(block_H, block_size):
     """Pick the backward CTA width for a ``(block_H, block_size)`` tile.
@@ -161,7 +166,7 @@ def bwd(
     attn_sink_shape = [H]
 
     padded_H = max(tilelang.math.next_power_of_2(H), 16)
-    block_H = min(64, padded_H)
+    block_H = min(MAX_BLOCK_H, padded_H)
     assert padded_H % block_H == 0
     NH = padded_H // block_H
     BS = block_size
