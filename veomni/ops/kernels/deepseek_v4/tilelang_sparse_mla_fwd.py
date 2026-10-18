@@ -25,7 +25,7 @@ import tilelang
 import torch
 from tilelang import language as T
 
-from ....utils.device import get_torch_device
+from ....utils.device import get_max_shared_memory_per_block
 
 
 @tilelang.jit(
@@ -115,12 +115,7 @@ def sparse_mqa_fwd(
         + H_per_block * BI * 2  # S_shared, bf16
         + max(num_stages, 1) * BI * D * 2  # KV_shared, one buffer per stage
     )
-    # Every kernel here is CUDA-only, so the device-agnostic helper reads as more
-    # portable than it is -- but it stays: `device-api-check` rejects a vendor-namespaced
-    # device reference under veomni/ unless `veomni/utils/device.py` has no equivalent,
-    # and here it does. Reaching this line already implies an accelerator anyway, since
-    # the module imports tilelang at import time and only a compiling kernel gets here.
-    smem_limit = get_torch_device().get_device_properties(None).shared_memory_per_block_optin
+    smem_limit = get_max_shared_memory_per_block()
     assert smem_lower_bound <= smem_limit, (
         f"num_stages={num_stages} at block_I={block_I}, dim={dim} needs at least "
         f"{smem_lower_bound} B of shared memory per block, above this device's {smem_limit} B"

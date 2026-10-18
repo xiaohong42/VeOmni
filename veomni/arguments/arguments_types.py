@@ -1709,15 +1709,16 @@ class OpsImplementationConfig:
 
         # ``qat_implementation`` selects a quantization recipe instead of a
         # kernel backend, so no OpSlot resolution validates it. Its fake
-        # quantizers are the SM90-only TileLang kernels: without this check a
-        # CPU, NPU, ROCm or pre-SM90 host trains for a while and then raises
+        # quantizers are the SM90+/gfx950 TileLang kernels: without this check a
+        # CPU, NPU, other ROCm or pre-SM90 host trains for a while and then raises
         # inside the first fake-quant call.
         if self.qat_implementation != "none":
             import torch
 
-            from ..utils.device import IS_CUDA_AVAILABLE, get_gpu_compute_capability
+            from ..ops.kernels.deepseek_v4 import TILELANG_ROCM_ARCHS
+            from ..utils.device import IS_CUDA_AVAILABLE, get_gpu_compute_capability, get_rocm_gcn_arch
 
-            unsupported = torch.version.hip is not None or not IS_CUDA_AVAILABLE
+            unsupported = not IS_CUDA_AVAILABLE
             if not unsupported:
                 # Reading the capability initializes CUDA, and parsing happens
                 # before the trainer calls ``set_device`` -- query this rank's
@@ -1725,12 +1726,15 @@ class OpsImplementationConfig:
                 # every rank. The count is NVML-based and needs no context.
                 local_rank = int(os.getenv("LOCAL_RANK", "0"))
                 device = local_rank if local_rank < torch.cuda.device_count() else 0
-                unsupported = get_gpu_compute_capability(device) < 90
+                if torch.version.hip is not None:
+                    unsupported = get_rocm_gcn_arch(device) not in TILELANG_ROCM_ARCHS
+                else:
+                    unsupported = get_gpu_compute_capability(device) < 90
             if unsupported:
                 raise ValueError(
                     f"qat_implementation={self.qat_implementation!r} requires an SM90 or later NVIDIA CUDA "
-                    f"GPU, because its fake quantizers are the DeepSeek V4 TileLang kernels. "
-                    f"Set it to 'none' to train in the model dtype."
+                    f"GPU or an AMD {'/'.join(TILELANG_ROCM_ARCHS)} GPU, because its fake quantizers are the "
+                    f"DeepSeek V4 TileLang kernels. Set it to 'none' to train in the model dtype."
                 )
 
 

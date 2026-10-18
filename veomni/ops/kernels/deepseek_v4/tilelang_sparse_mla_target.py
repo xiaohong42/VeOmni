@@ -30,7 +30,7 @@ import tilelang
 import torch
 from tilelang import language as T
 
-from ....utils.device import get_torch_device
+from ....utils.device import get_max_shared_memory_per_block
 
 
 @tilelang.jit(
@@ -84,7 +84,7 @@ def sparse_mqa_target(heads, dim, topk, sm_scale=None, block_I=64, threads=256):
     D = dim
 
     smem_lower_bound = H_per_block * D * 2 + BI * D * 2
-    smem_limit = get_torch_device().get_device_properties(None).shared_memory_per_block_optin
+    smem_limit = get_max_shared_memory_per_block()
     if smem_lower_bound > smem_limit:
         raise RuntimeError(
             f"block_I={block_I}, dim={dim}, heads={heads} needs at least {smem_lower_bound} B "

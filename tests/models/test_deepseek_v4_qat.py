@@ -38,7 +38,7 @@ from torch import nn
 from veomni.models.transformers.deepseek_v4.generated import patched_modeling_deepseek_v4_gpu as modeling_gpu
 from veomni.models.transformers.deepseek_v4.generated import patched_modeling_deepseek_v4_npu as modeling_npu
 from veomni.ops.dispatch import OpsConfigSlot
-from veomni.utils.device import IS_CUDA_AVAILABLE, get_device_type, get_gpu_compute_capability
+from veomni.utils.device import get_device_type
 
 
 DEVICE = get_device_type()
@@ -107,10 +107,10 @@ _EXPECTED_ACT_QUANT = {
 
 def _require_tilelang_cuda():
     pytest.importorskip("tilelang")
-    if torch.version.hip is not None or not IS_CUDA_AVAILABLE:
-        pytest.skip("DeepSeek V4 TileLang kernels require an NVIDIA CUDA GPU")
-    if get_gpu_compute_capability() < 90:
-        pytest.skip("DeepSeek V4 TileLang kernels require SM90 or later")
+    from veomni.ops.kernels.deepseek_v4 import is_tilelang_supported
+
+    if not is_tilelang_supported():
+        pytest.skip("DeepSeek V4 TileLang kernels require an SM90+ NVIDIA GPU or an AMD gfx950 GPU")
 
 
 def _qat_slot(value):
