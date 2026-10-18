@@ -385,7 +385,8 @@ class DeepseekV4CheckpointTensorConverter:
     def export_weights(self, model: torch.nn.Module) -> Generator[tuple[str, torch.Tensor]]:
         config = model.config
         fqn_to_index_mapping = model._veomni_fqn_to_index_mapping
-        expert_dtype = config.expert_dtype
+        # Same default as DeepseekV4Experts: re-quantized checkpoints often omit the field.
+        expert_dtype = getattr(config, "expert_dtype", "fp8")
         scale_fmt = "ue8m0"
         scale_dtype = torch.float8_e8m0fnu if expert_dtype == "fp4" else torch.float32
         # HF's renamings are not invertible (e.g. reversing ``.norm.`` -> ``.kv_norm.`` also rewrites the native
