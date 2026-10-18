@@ -507,6 +507,12 @@ def test_deepseek_v4_generated_attention_dispatch_matches_eager():
         assert weights is None
         torch.testing.assert_close(actual.float(), expected.float(), rtol=2e-2, atol=2e-2)
 
+        # The kernel's dtype contract is enforced rather than silently routed to eager.
+        with pytest.raises(ValueError, match="requires bfloat16"):
+            modeling.eager_attention_forward(
+                module, query.float(), key.float(), key.float(), causal_mask, dim**-0.5, dropout=0.0
+            )
+        modeling.veomni_dsa_attention_implementation.bind(SimpleNamespace(dsa_attention_implementation="eager"))
         fp32_output, fp32_weights = modeling.eager_attention_forward(
             module, query.float(), key.float(), key.float(), causal_mask, dim**-0.5, dropout=0.0
         )
@@ -574,6 +580,11 @@ def test_deepseek_v4_generated_indexer_dispatch_and_position_fallback(monkeypatc
         assert packed_kwargs["cu_seqlen_ke"][-1] == 2 * expected_topk
         assert packed_indices.shape == (1, 2 * seq_len, 2 * expected_topk)
 
+        # Non-canonical positions are refused instead of silently falling back to eager.
+        with pytest.raises(ValueError, match="does not support this call"):
+            indexer(hidden_states, q_residual, canonical_positions + 1, None, 0)
+        assert len(calls) == 2
+        modeling.veomni_dsa_indexer_implementation.bind(SimpleNamespace(dsa_indexer_implementation="eager"))
         eager_indices = indexer(hidden_states, q_residual, canonical_positions + 1, None, 0)
         assert len(calls) == 2
         assert eager_indices.shape == tilelang_indices.shape
