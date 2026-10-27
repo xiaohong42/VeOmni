@@ -21,16 +21,21 @@ TileKernels on SM90+ NVIDIA and gfx942/gfx950 AMD GPUs. ``post`` /
 ``head`` keep an opaque wrapper because TileKernels owns that autograd.
 ``cann`` is the Ascend CANN fused pre and post. CANN has no head kernel,
 so ``head`` / ``cann`` runs the eager math and lets one
-``mhc_implementation`` name cover all three variants.
+``mhc_implementation`` name cover all three variants. ``aiter`` is AITER's
+DeepSeek-V4 mHC on AMD ROCm: Triton forwards whose backward AITER recomputes
+in PyTorch, so all three variants are opaque wrappers.
 """
 
-from ...platform import TILELANG_GPUS, GpuKernelRequirement, NpuKernelRequirement
+from ...platform import ROCM_GPU, TILELANG_GPUS, GpuKernelRequirement, NpuKernelRequirement
 from ...registry import register_op
+from .head import aiter as head_aiter
 from .head import eager as head_eager
 from .head import tilelang as head_tilelang
+from .post import aiter as post_aiter
 from .post import cann as post_cann
 from .post import eager as post_eager
 from .post import tilelang as post_tilelang
+from .pre import aiter as pre_aiter
 from .pre import cann as pre_cann
 from .pre import eager as pre_eager
 from .pre import tilelang as pre_tilelang
@@ -38,6 +43,7 @@ from .pre import tilelang as pre_tilelang
 
 _TILELANG = GpuKernelRequirement(platforms=TILELANG_GPUS)
 _CANN = NpuKernelRequirement()
+_AITER = GpuKernelRequirement(platforms=(ROCM_GPU,))
 
 register_op(
     "mhc",
@@ -65,6 +71,16 @@ register_op(
     wrapper=pre_cann.wrapper,
     requirement=_CANN,
     requires=("cann_ops_transformer",),
+)
+
+register_op(
+    "mhc",
+    "pre",
+    "aiter",
+    description="AITER DeepSeek-V4 mHC pre transform with Sinkhorn normalization and collapse",
+    wrapper=pre_aiter.wrapper,
+    requirement=_AITER,
+    requires=("aiter",),
 )
 
 register_op(
@@ -98,6 +114,16 @@ register_op(
 
 register_op(
     "mhc",
+    "post",
+    "aiter",
+    description="AITER DeepSeek-V4 mHC residual post-mix",
+    wrapper=post_aiter.wrapper,
+    requirement=_AITER,
+    requires=("aiter",),
+)
+
+register_op(
+    "mhc",
     "head",
     "eager",
     description="PyTorch DeepSeek-V4 final mHC collapse",
@@ -121,4 +147,14 @@ register_op(
     description="PyTorch DeepSeek-V4 final mHC collapse for CANN builds (no CANN head kernel)",
     wrapper=head_eager.wrapper,
     requirement=_CANN,
+)
+
+register_op(
+    "mhc",
+    "head",
+    "aiter",
+    description="AITER DeepSeek-V4 final mHC collapse",
+    wrapper=head_aiter.wrapper,
+    requirement=_AITER,
+    requires=("aiter",),
 )

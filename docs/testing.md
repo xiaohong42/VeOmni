@@ -216,7 +216,7 @@ DeepSeek-V4- and GLM-MoE-DSA-specific DSA checks live under `tests/ops/dsa/`; op
 tests require TileLang on an SM90+ NVIDIA GPU (DeepSeek-V4's also run on AMD gfx942/gfx950), and
 the `cann` parity tests require an Ascend NPU with `cann_ops_transformer`. Its mHC kernel parity is
 covered by `tests/ops/mhc/test_mhc.py` and requires TileKernels on an SM90+ NVIDIA GPU or an AMD
-gfx942/gfx950 GPU, or CANN on an Ascend NPU.
+gfx942/gfx950 GPU, AITER on an AMD ROCm GPU, or CANN on an Ascend NPU.
 
 DeepSeek-V4 expert-parallel training is exercised separately by
 `tests/e2e/test_e2e_parallel.py::test_deepseek_v4_expert_parallel_alignment`:

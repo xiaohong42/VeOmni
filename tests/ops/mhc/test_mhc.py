@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""mHC eager vs HuggingFace DeepSeek-V4, and TileLang / CANN vs eager."""
+"""mHC eager vs HuggingFace DeepSeek-V4, and TileLang / AITER / CANN vs eager."""
 
 from __future__ import annotations
 
@@ -38,13 +38,27 @@ from tests.ops.tol import (
 from tests.ops.utils import assert_gradient_direction_and_scale, is_tilelang_gpu_available, make_grad_leaves
 from veomni.ops import OP_REGISTRY, resolve_op
 from veomni.ops.kernels.mhc.pre import cann as pre_cann
+from veomni.ops.platform import ROCM_GPU
 from veomni.utils.device import IS_NPU_AVAILABLE, get_device_type
 
 
 # Installed Transformers classes used as the mHC eager reference.
 
 _TILELANG_AVAILABLE = is_tilelang_gpu_available() and importlib.util.find_spec("tile_kernels") is not None
+_AITER_AVAILABLE = ROCM_GPU.matches() and importlib.util.find_spec("aiter") is not None
 _CANN_AVAILABLE = IS_NPU_AVAILABLE and importlib.util.find_spec("cann_ops_transformer") is not None
+_FUSED_GPU_IMPLS = (
+    pytest.param(
+        "tilelang",
+        marks=pytest.mark.skipif(
+            not _TILELANG_AVAILABLE,
+            reason="TileKernels mHC requires an SM90+ NVIDIA CUDA GPU or an AMD gfx942/gfx950 GPU",
+        ),
+    ),
+    pytest.param(
+        "aiter", marks=pytest.mark.skipif(not _AITER_AVAILABLE, reason="AITER mHC requires an AMD ROCm GPU and aiter")
+    ),
+)
 
 
 def _tiny_dsv4_config(
@@ -189,10 +203,8 @@ def test_mhc_head_eager_matches_hf():
     assert torch.allclose(base_e.grad, head.hc_base.grad, atol=EAGER_GRAD_ATOL, rtol=EAGER_GRAD_RTOL)
 
 
-@pytest.mark.skipif(
-    not _TILELANG_AVAILABLE, reason="TileKernels mHC requires an SM90+ NVIDIA CUDA GPU or an AMD gfx942/gfx950 GPU"
-)
-def test_mhc_tilelang_pre_post_matches_eager():
+@pytest.mark.parametrize("impl", _FUSED_GPU_IMPLS)
+def test_mhc_fused_pre_post_matches_eager(impl):
     torch.manual_seed(17)
     device = torch.device("cuda")
     batch, seq_len, hc_mult, hidden = 1, 32, 4, 256
@@ -203,9 +215,9 @@ def test_mhc_tilelang_pre_post_matches_eager():
     scale = torch.randn(3, device=device, dtype=torch.float32) * 0.01
     base = torch.randn(mix, device=device, dtype=torch.float32) * 0.01
     eager_pre = resolve_op("mhc", "pre", "eager").wrapper
-    other_pre = resolve_op("mhc", "pre", "tilelang").wrapper
+    other_pre = resolve_op("mhc", "pre", impl).wrapper
     eager_post = resolve_op("mhc", "post", "eager").wrapper
-    other_post = resolve_op("mhc", "post", "tilelang").wrapper
+    other_post = resolve_op("mhc", "post", impl).wrapper
 
     with torch.no_grad():
         inference = other_pre(x, fn, scale, base, norm_eps, hc_mult, sinkhorn_iters, hc_eps)
@@ -237,10 +249,8 @@ def test_mhc_tilelang_pre_post_matches_eager():
         )
 
 
-@pytest.mark.skipif(
-    not _TILELANG_AVAILABLE, reason="TileKernels mHC requires an SM90+ NVIDIA CUDA GPU or an AMD gfx942/gfx950 GPU"
-)
-def test_mhc_tilelang_head_matches_eager():
+@pytest.mark.parametrize("impl", _FUSED_GPU_IMPLS)
+def test_mhc_fused_head_matches_eager(impl):
     torch.manual_seed(23)
     device = torch.device("cuda")
     batch, seq_len, hc_mult, hidden = 1, 32, 4, 256
@@ -250,7 +260,7 @@ def test_mhc_tilelang_head_matches_eager():
     scale = torch.randn(1, device=device, dtype=torch.float32) * 0.01
     base = torch.randn(hc_mult, device=device, dtype=torch.float32) * 0.01
     eager = resolve_op("mhc", "head", "eager").wrapper
-    other = resolve_op("mhc", "head", "tilelang").wrapper
+    other = resolve_op("mhc", "head", impl).wrapper
 
     x_o, fn_o, scale_o, base_o = make_grad_leaves(x, fn, scale, base)
     x_e, fn_e, scale_e, base_e = make_grad_leaves(x, fn, scale, base)

@@ -43,6 +43,7 @@ import sys
 real_import = builtins.__import__
 attempted_optional_imports = []
 optional_roots = {
+    "aiter",
     "apex",
     "cuda",
     "cudnn",

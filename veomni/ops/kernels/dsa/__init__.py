@@ -17,7 +17,8 @@
 ``dsa_attention`` / ``dsa_indexer`` each have ``deepseek_v4`` and ``glm``
 rows. Fused impls are opaque wrappers around TileLang, Triton, or FlashMLA
 ``Function.apply``. The ``deepseek_v4`` ``cann`` rows call the Ascend CANN
-Lightning Indexer and sparse FlashMLA.
+Lightning Indexer and sparse FlashMLA. The ``deepseek_v4`` ``triton`` rows are
+the AMD ROCm sparse attention and a forward-only indexer.
 """
 
 from ...platform import NVIDIA_SM90_PLUS, ROCM_GPU, TILELANG_GPUS, GpuKernelRequirement, NpuKernelRequirement
@@ -31,6 +32,7 @@ from .attention.glm import flashmla_cudnn as glm_attn_flashmla
 from .indexer.deepseek_v4 import cann as dsv4_indexer_cann
 from .indexer.deepseek_v4 import eager as dsv4_indexer_eager
 from .indexer.deepseek_v4 import tilelang as dsv4_indexer_tilelang
+from .indexer.deepseek_v4 import triton as dsv4_indexer_triton
 from .indexer.glm import cudnn as glm_indexer_cudnn
 from .indexer.glm import eager as glm_indexer_eager
 
@@ -111,6 +113,16 @@ register_op(
     wrapper=dsv4_indexer_tilelang.wrapper,
     requirement=_TILELANG,
     requires=("tilelang",),
+)
+
+register_op(
+    "dsa_indexer",
+    "deepseek_v4",
+    "triton",
+    description="Triton DeepSeek-V4 sparse-attention indexer, forward only",
+    wrapper=dsv4_indexer_triton.wrapper,
+    requirement=_ROCM,
+    requires=("triton",),
 )
 
 register_op(

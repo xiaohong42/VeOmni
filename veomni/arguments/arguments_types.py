@@ -1530,12 +1530,12 @@ class OpsImplementationConfig:
             "attention mask. Nonzero attention dropout falls back to eager with a warning."
         },
     )
-    dsa_indexer_implementation: Literal["eager", "cudnn", "cann", "tilelang"] = field(
+    dsa_indexer_implementation: Literal["eager", "cudnn", "cann", "tilelang", "triton"] = field(
         default="eager",
         metadata={
-            "help": "DeepSeek sparse attention top-k indexer implementation: 'eager', 'cudnn', 'cann', or "
-            "'tilelang'. 'cann' is the DeepSeek-V4 Ascend CANN Lightning Indexer (requires "
-            "cann_ops_transformer)."
+            "help": "DeepSeek sparse attention top-k indexer implementation: 'eager', 'cudnn', 'cann', "
+            "'tilelang', or 'triton'. 'cann' is the DeepSeek-V4 Ascend CANN Lightning Indexer (requires "
+            "cann_ops_transformer); 'triton' is the DeepSeek-V4 indexer forward on AMD ROCm (no indexer loss)."
         },
     )
     dsa_attention_implementation: Literal["eager", "flashmla_cudnn", "cann", "tilelang", "triton"] = field(
@@ -1546,13 +1546,14 @@ class OpsImplementationConfig:
             "(requires cann_ops_transformer); 'triton' is DeepSeek-V4 sparse MQA on AMD ROCm."
         },
     )
-    mhc_implementation: Literal["eager", "cann", "tilelang"] = field(
+    mhc_implementation: Literal["eager", "cann", "tilelang", "aiter"] = field(
         default="eager",
         metadata={
             "help": "Manifold-constrained Hyper-Connection implementation. 'tilelang' enables the "
             "DeepSeek V4 TileKernels forward/backward path on NVIDIA SM90+ or AMD gfx942/gfx950; 'cann' enables the "
             "Ascend CANN fused pre/post path with a PyTorch final-head collapse (requires NPU BF16 "
-            "and cann_ops_transformer); 'eager' uses PyTorch."
+            "and cann_ops_transformer); 'aiter' enables AITER's DeepSeek V4 Triton forward with a "
+            "PyTorch-recompute backward on AMD ROCm (requires aiter); 'eager' uses PyTorch."
         },
     )
     qat_implementation: Literal["none", "fp8_blockwise"] = field(

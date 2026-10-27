@@ -18,9 +18,9 @@ If a field is not in this table, it is not an op-selection knob.
 | Op | Config field | Available values | Default | Selection time |
 |--------|-------------|------------------|---------|----------------|
 | Attention | `attn_implementation` | `eager`, `sdpa`, `flash_attention_2`, `flash_attention_3`, `flash_attention_4`, `flex_attention`, `aiter`, `magi_attention`, `sage_attention`, `native-sparse` | `"flash_attention_2"` | Config `__post_init__` rewrite + model `__init__` via `VeomniOp("attention", "standard", config._attn_implementation)` stored on the attention module |
-| DSA indexer | `dsa_indexer_implementation` | `eager`, `cudnn` (GLM-DSA), `tilelang` (DeepSeek-V4), `cann` (DeepSeek-V4) | `"eager"` | Model `__init__` via an instance-local `VeomniOp` |
+| DSA indexer | `dsa_indexer_implementation` | `eager`, `cudnn` (GLM-DSA), `tilelang` (DeepSeek-V4), `triton` (DeepSeek-V4, ROCm, forward only), `cann` (DeepSeek-V4) | `"eager"` | Model `__init__` via an instance-local `VeomniOp` |
 | DSA attention | `dsa_attention_implementation` | `eager`, `flashmla_cudnn` (GLM-DSA), `tilelang` (DeepSeek-V4), `triton` (DeepSeek-V4), `cann` (DeepSeek-V4) | `"eager"` | Model `__init__` via an instance-local `VeomniOp` |
-| mHC | `mhc_implementation` | `eager`, `tilelang` (DeepSeek-V4, SM90+ or gfx942/gfx950), `cann` (DeepSeek-V4, Ascend) | `"eager"` | Model `__init__` via three instance-local `VeomniOp`s (`pre`, `post`, `head`) |
+| mHC | `mhc_implementation` | `eager`, `tilelang` (DeepSeek-V4, SM90+ or gfx942/gfx950), `aiter` (DeepSeek-V4, ROCm), `cann` (DeepSeek-V4, Ascend) | `"eager"` | Model `__init__` via three instance-local `VeomniOp`s (`pre`, `post`, `head`) |
 | QSA attention | `qsa_attention_implementation` | `eager`, `tilelang` (Qwen4-Exp, NVIDIA CUDA), `torch_npu` (Qwen4-Exp, Ascend NPU) | `"eager"` | Model `__init__` via an instance-local `VeomniOp` |
 | Cross-entropy loss | `cross_entropy_loss_implementation` | `eager`, `liger_kernel`, `chunk_loss` | `"liger_kernel"` (GPU, MLU), `"chunk_loss"` (NPU) | Model `__init__` via an instance-local `VeomniOp` |
 | RMSNorm | `rms_norm_implementation` | `eager`, `liger_kernel`, `torch_npu`, `triton` (per-model; DeepSeek-V3) | `"liger_kernel"` (GPU, MLU), `"torch_npu"` (NPU) | Model `__init__` via an instance-local `VeomniOp` |
@@ -263,6 +263,20 @@ and DeepSeek V4's `hc_mult=4` layout.
 On AMD ROCm GPUs, `dsa_attention_implementation: triton` selects the same
 DeepSeek-V4 sparse MQA contract. The indexer and mHC remain independent;
 the optional indexer-loss teacher still requires both TileLang selections.
+`dsa_indexer_implementation: triton` is a forward-only Triton Lightning
+Indexer with the TileLang row's contract (its scores carry no gradient), and
+`mhc_implementation: aiter` runs AITER's DeepSeek-V4 mHC: Triton forwards
+whose backward AITER recomputes in PyTorch. Together with the `triton`
+attention they cover DeepSeek-V4's DSA and mHC on ROCm without TileLang or
+TileKernels:
+
+```yaml
+model:
+  ops_implementation:
+    dsa_indexer_implementation: triton
+    dsa_attention_implementation: triton
+    mhc_implementation: aiter
+```
 
 The same three fields select `cann` on Ascend, which requires
 `cann_ops_transformer`:
