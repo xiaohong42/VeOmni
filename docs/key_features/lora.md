@@ -394,14 +394,15 @@ Each MoE-LoRA wrapper follows the `moe_implementation` its wrapped experts modul
 | `fused_npu` | NPU GroupGEMM | NPU GroupGEMM | Recommended on Ascend NPU. |
 | `eager` | eager loop (reference) | not supported (raises) | Portable reference path. |
 | `deepgemm_fp8` | not supported (raises) | not supported (raises) | No FP8 MoE-LoRA implementation; rejected at wrap time. |
+| `aiter_fp8` | not supported (raises) | not supported (raises) | No FP8 MoE-LoRA implementation; rejected at wrap time. |
 
 The fused GPU path lives in `veomni/ops/kernels/moe_experts_lora/` and reuses the same
 `group_gemm_same_nk` / `group_gemm_same_mn` primitives as the non-LoRA MoE forward, so it
 inherits the same EP `all-to-all` dispatch pipeline. Each wrapper constructs
 `VeomniOp("moe_experts_lora", variant, impl)` from the wrapped experts'
 `veomni_moe.impl`. If no LoRA row is available (for example `fused_quack`, or
-`fused_triton` on MLU), the wrapper uses `eager`. The exception is
-`deepgemm_fp8`: both shared and independent wrappers reject it before moving
+`fused_triton` on MLU), the wrapper uses `eager`. The exceptions are
+`deepgemm_fp8` and `aiter_fp8`: both shared and independent wrappers reject them before moving
 the base parameters, to avoid silently changing precision. This restriction
 only applies to LoRA targeting expert weights; dense-module LoRA is unaffected.
 MoE-LoRA requires SiLU experts and rejects other activations at wrap time.

@@ -185,3 +185,33 @@ lazy-import checks remain available without the GPU dependency.
 - [Quantizers and training autograd](../../veomni/ops/kernels/moe_experts/shared/deepgemm_fp8.py)
 - [Numerical tests](../../tests/ops/moe_experts/test_deepgemm_fp8.py)
 - [Distributed tests](../../tests/ops/moe_experts/test_deepgemm_fp8_distributed.py)
+
+## AMD ROCm: `aiter_fp8`
+
+`moe_implementation: aiter_fp8` runs the same recipe on AMD ROCm GPUs through
+AITER's grouped GEMM (`aiter.ops.triton.moe.sonicmoe.grouped_gemm`), with the
+same tensor contract, EP support, QAT exclusion and MoE-LoRA rejection as
+`deepgemm_fp8`. Activations use 1x128 scales for forward and dgrad and
+independent token-axis 128x1 scales for wgrad, weights use 128x128 tiles, and
+every operand is quantized from BF16. The differences follow from the hardware
+and the GEMM:
+
+- The payload is the GPU's native FP8, e4m3fnuz on gfx942 and e4m3fn on
+  gfx950, scaled to that format's largest finite value (240 or 448). Scales are
+  always FP32; there is no UE8M0 variant.
+- AITER takes expert-contiguous rows with `cu_seqlens` offsets, so groups are
+  not padded and the token-axis wgrad scale blocks restart at every expert's
+  first row. Dgrad takes the `[E, N, K]` weight layout as is, so there is no
+  transposed FP8 copy; the weight is requantized from BF16 for dgrad.
+- The SwiGLU between the projections is the eager PyTorch expression.
+
+```yaml
+model:
+  ops_implementation:
+    moe_implementation: aiter_fp8
+    qat_implementation: none
+```
+
+- [Standard expert wrapper](../../veomni/ops/kernels/moe_experts/standard/aiter.py)
+- [Quantizers and training autograd](../../veomni/ops/kernels/moe_experts/shared/aiter_fp8.py)
+- [Numerical tests](../../tests/ops/moe_experts/test_aiter_fp8.py)

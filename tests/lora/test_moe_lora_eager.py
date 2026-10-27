@@ -336,7 +336,8 @@ def test_wrapper_uses_eager_when_lora_row_is_unavailable(monkeypatch, mode: str,
 
 @pytest.mark.launch_plan(provider=LaunchSpec(device="cpu"))
 @pytest.mark.parametrize("mode", _MODE_CASES)
-def test_wrapper_rejects_deepgemm_fp8_before_moving_parameters(mode: str):
+@pytest.mark.parametrize("fp8_impl", ["deepgemm_fp8", "aiter_fp8"])
+def test_wrapper_rejects_fp8_moe_before_moving_parameters(mode: str, fp8_impl: str):
     from types import SimpleNamespace
 
     base_layer = torch.nn.Module()
@@ -347,11 +348,11 @@ def test_wrapper_rejects_deepgemm_fp8_before_moving_parameters(mode: str):
     base_layer.gate_up_proj = torch.nn.Parameter(torch.empty(2, 16, 8))
     base_layer.down_proj = torch.nn.Parameter(torch.empty(2, 8, 8))
     base_layer.register_buffer("residual_mask", torch.ones(2))
-    base_layer.veomni_moe = SimpleNamespace(impl="deepgemm_fp8")
+    base_layer.veomni_moe = SimpleNamespace(impl=fp8_impl)
     original_parameters = dict(base_layer.named_parameters())
     original_buffers = dict(base_layer.named_buffers())
 
-    with pytest.raises(ValueError, match="deepgemm_fp8.*does not support MoE-LoRA"):
+    with pytest.raises(ValueError, match=f"{fp8_impl}.*does not support MoE-LoRA"):
         _wrapper_cls(mode)(base_layer, r=2, lora_alpha=4)
 
     assert dict(base_layer.named_parameters()).keys() == original_parameters.keys()

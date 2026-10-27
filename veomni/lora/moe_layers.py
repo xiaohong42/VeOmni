@@ -118,7 +118,7 @@ Both wrappers always call ``VeomniOp("moe_experts_lora", variant, impl)``.
 ``variant`` is the wrapper class (``shared`` / ``independent``). ``impl``
 follows the wrapped experts' ``veomni_moe`` handle when that LoRA row is
 available on this device, and falls back to ``eager`` otherwise. The FP8
-``deepgemm_fp8`` backend rejects expert LoRA rather than changing precision.
+``deepgemm_fp8`` and ``aiter_fp8`` backends reject expert LoRA rather than changing precision.
 
 PEFT-format save/load compatibility (PEFT-aligned FQN layout)
 -------------------------------------------------------------
@@ -168,9 +168,9 @@ def _moe_lora_op(base_layer: nn.Module, variant: str):
 
     base_op = getattr(base_layer, "veomni_moe", None)
     impl = "eager" if base_op is None else base_op.impl
-    if impl == "deepgemm_fp8":
+    if impl in ("deepgemm_fp8", "aiter_fp8"):
         raise ValueError(
-            "moe_implementation='deepgemm_fp8' does not support MoE-LoRA on expert weights. "
+            f"moe_implementation={impl!r} does not support MoE-LoRA on expert weights. "
             "Select a supported MoE-LoRA backend (for example 'fused_triton' on GPU), "
             "or exclude expert weights from the LoRA targets."
         )

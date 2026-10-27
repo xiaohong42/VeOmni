@@ -1425,7 +1425,8 @@ class OpsImplementationConfig:
         default=None,
         metadata={
             "help": "MoE experts forward. 'fused_triton' (GPU SM70+ or MLU) | "
-            "'fused_quack' (GPU SM90+) | 'deepgemm_fp8' (SM90/SM100 FP8 training) | 'fused_npu' (NPU) | "
+            "'fused_quack' (GPU SM90+) | 'deepgemm_fp8' (SM90/SM100 FP8 training) | "
+            "'aiter_fp8' (AMD ROCm FP8 training) | 'fused_npu' (NPU) | "
             "'fused_mlu' (MLU Apex grouped-GEMM) | 'eager'. "
             "Unset: 'fused_triton' on GPU, 'fused_npu' on NPU, 'fused_mlu' on MLU with Apex "
             "and 'fused_triton' otherwise."
@@ -1568,7 +1569,8 @@ class OpsImplementationConfig:
             "(FP4 experts on NVIDIA SM90+ only); "
             "'none' trains in the model dtype. Unlike the other fields this selects a quantization "
             "recipe rather than an op-registry implementation, so it is not selected through "
-            "VeomniOp -- see veomni/ops/qat/. Must be 'none' when moe_implementation='deepgemm_fp8'."
+            "VeomniOp -- see veomni/ops/qat/. Must be 'none' when moe_implementation is 'deepgemm_fp8' or "
+            "'aiter_fp8'."
         },
     )
 
@@ -1683,11 +1685,11 @@ class OpsImplementationConfig:
         compatibility are validated by instance-local ``VeomniOp``
         resolution — not duplicated here.
         """
-        if self.moe_implementation == "deepgemm_fp8" and self.qat_implementation != "none":
+        if self.moe_implementation in ("deepgemm_fp8", "aiter_fp8") and self.qat_implementation != "none":
             raise ValueError(
-                "moe_implementation='deepgemm_fp8' cannot be combined with "
+                f"moe_implementation={self.moe_implementation!r} cannot be combined with "
                 f"qat_implementation={self.qat_implementation!r}. Set qat_implementation='none'; "
-                "DeepGEMM already quantizes the expert GEMM operands."
+                "the FP8 experts already quantize their GEMM operands."
             )
 
         from ..utils.device import IS_NPU_AVAILABLE

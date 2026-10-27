@@ -1,7 +1,7 @@
 # Copyright 2026 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: Apache-2.0
 
-"""Real NCCL EP dispatch and FSDP2 resharding for Hopper/Blackwell FP8 experts."""
+"""Real NCCL EP dispatch and FSDP2 resharding for the FP8 experts: DeepGEMM on Hopper/Blackwell, AITER on ROCm."""
 
 from datetime import timedelta
 
@@ -15,12 +15,13 @@ from scripts.ci.accelerator.launch_plan import from_parameter, runner_device_cou
 from tests.ops.moe_experts.reference import standard_ep_reference
 from tests.ops.moe_experts.test_deepgemm_fp8 import _relative_error
 from veomni.distributed.parallel_state import _init_parallel_state, clear_parallel_state
-from veomni.ops.kernels.moe_experts.standard.deepgemm import wrapper
+from veomni.ops.kernels.moe_experts.standard import aiter, deepgemm
 
 
 class _Experts(nn.Module):
-    def __init__(self, w1, w2, experts, use_checkpoint=False):
+    def __init__(self, w1, w2, experts, impl, use_checkpoint=False):
         super().__init__()
+        self.wrapper = aiter.wrapper if impl == "aiter_fp8" else deepgemm.wrapper
         self.fc1 = nn.Parameter(w1.clone())
         self.fc2 = nn.Parameter(w2.clone())
         self.experts = experts
@@ -37,7 +38,7 @@ class _Experts(nn.Module):
 
     def _forward(self, x, routing, indices):
         empty = x.new_empty(0)
-        return wrapper(
+        return self.wrapper(
             x,
             routing,
             indices,
@@ -51,7 +52,7 @@ class _Experts(nn.Module):
         )
 
 
-def _worker(rank, world, ep_size, use_fsdp, repeated, use_checkpoint, rendezvous):
+def _worker(rank, impl, world, ep_size, use_fsdp, repeated, use_checkpoint, rendezvous):
     from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
     from torch.distributed.tensor import Shard
 
@@ -75,7 +76,7 @@ def _worker(rank, world, ep_size, use_fsdp, repeated, use_checkpoint, rendezvous
         w2 = (torch.randn(e, h, intermediate, device="cuda") * 0.03).bfloat16().float()
         expert_rank = state.ep_rank if ep_size > 1 else 0
         begin, end = expert_rank * e // ep_size, (expert_rank + 1) * e // ep_size
-        module = _Experts(w1[begin:end], w2[begin:end], e, use_checkpoint)
+        module = _Experts(w1[begin:end], w2[begin:end], e, impl, use_checkpoint)
         if use_fsdp:
             mesh = (
                 state.extra_parallel_fsdp_device_mesh["ep"]["ep_fsdp"]
@@ -99,7 +100,7 @@ def _worker(rank, world, ep_size, use_fsdp, repeated, use_checkpoint, rendezvous
             y = module(xi, ri, indices[rank])
             assert y.dtype == xi.dtype
             y.backward(grad[rank])
-            xr, rr, wr1, wr2 = [a.detach().clone().requires_grad_() for a in (x, routing, w1, w2)]
+            xr, rr, wr1, wr2 = (a.detach().clone().requires_grad_() for a in (x, routing, w1, w2))
             gate, up = wr1.bfloat16().chunk(2, dim=1)
             yr = standard_ep_reference(
                 xr.flatten(0, 1),
@@ -136,6 +137,7 @@ def _worker(rank, world, ep_size, use_fsdp, repeated, use_checkpoint, rendezvous
 
 
 @pytest.mark.launch_plan(provider=from_parameter("world"))
+@pytest.mark.parametrize("impl", ["deepgemm_fp8", "aiter_fp8"])
 @pytest.mark.parametrize(
     "world,ep_size,use_fsdp,repeated,use_checkpoint",
     [
@@ -155,17 +157,24 @@ def _worker(rank, world, ep_size, use_fsdp, repeated, use_checkpoint, rendezvous
         )
     ],
 )
-def test_distributed_fp8_experts(world, ep_size, use_fsdp, repeated, use_checkpoint, tmp_path):
-    if not torch.cuda.is_available() or torch.version.hip is not None:
-        pytest.skip("NVIDIA Hopper or Blackwell is required.")
-    if torch.cuda.device_count() < world or any(
-        torch.cuda.get_device_capability(i) not in ((9, 0), (10, 0)) for i in range(world)
-    ):
-        pytest.skip(f"Requires {world} Hopper/Blackwell GPUs.")
-    pytest.importorskip("deep_gemm")
+def test_distributed_fp8_experts(impl, world, ep_size, use_fsdp, repeated, use_checkpoint, tmp_path):
+    if impl == "aiter_fp8":
+        if not torch.cuda.is_available() or torch.version.hip is None:
+            pytest.skip("AMD ROCm is required.")
+        if torch.cuda.device_count() < world:
+            pytest.skip(f"Requires {world} ROCm GPUs.")
+        pytest.importorskip("aiter.ops.triton.moe.sonicmoe")
+    else:
+        if not torch.cuda.is_available() or torch.version.hip is not None:
+            pytest.skip("NVIDIA Hopper or Blackwell is required.")
+        if torch.cuda.device_count() < world or any(
+            torch.cuda.get_device_capability(i) not in ((9, 0), (10, 0)) for i in range(world)
+        ):
+            pytest.skip(f"Requires {world} Hopper/Blackwell GPUs.")
+        pytest.importorskip("deep_gemm")
     mp.spawn(
         _worker,
-        args=(world, ep_size, use_fsdp, repeated, use_checkpoint, f"file://{tmp_path / 'rdzv'}"),
+        args=(impl, world, ep_size, use_fsdp, repeated, use_checkpoint, f"file://{tmp_path / 'rdzv'}"),
         nprocs=world,
         join=True,
     )

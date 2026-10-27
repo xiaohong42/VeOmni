@@ -43,6 +43,7 @@ import sys
 real_import = builtins.__import__
 attempted_optional_imports = []
 optional_roots = {
+    "aiter",
     "apex",
     "cuda",
     "cudnn",
@@ -100,6 +101,7 @@ for module in (
     "veomni.ops.kernels.moe_experts_lora.shared.triton",
     "veomni.ops.kernels.moe_experts_lora.independent.triton",
     "veomni.ops.kernels.moe_experts.shared._triton_swiglu",
+    "veomni.ops.kernels.moe_experts.shared.aiter_fp8",
     "veomni.ops.kernels.moe_experts.shared.deepgemm_fp8",
     "veomni.ops.qat.quant",
 ):

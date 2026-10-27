@@ -31,6 +31,7 @@ from ...platform import (
 from ...registry import register_op
 from .gpt_oss import eager as gpt_oss_eager
 from .gpt_oss import quack as gpt_oss_quack
+from .standard import aiter as standard_aiter
 from .standard import deepgemm as standard_deepgemm
 from .standard import eager as standard_eager
 from .standard import mlu as standard_mlu
@@ -104,6 +105,16 @@ register_op(
         platforms=(NvidiaGpuPlatform(min_cc=90, max_cc=90), NvidiaGpuPlatform(min_cc=100, max_cc=100)),
     ),
     requires=("deep_gemm", "triton"),
+)
+
+register_op(
+    "moe_experts",
+    "standard",
+    "aiter_fp8",
+    description="AITER blockwise FP8 expert forward, input gradients and weight gradients",
+    wrapper=standard_aiter.wrapper,
+    requirement=GpuKernelRequirement(platforms=(ROCM_GPU,)),
+    requires=("aiter", "triton"),
 )
 
 register_op(

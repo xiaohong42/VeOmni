@@ -101,14 +101,15 @@ def test_resolve_op_impl_preserves_variant_scoped_npu_compatibility(impl):
 
 @pytest.mark.launch_plan(provider=LaunchSpec(device="cpu"))
 @pytest.mark.parametrize("parse_config", [False, True], ids=["dataclass", "parser"])
-def test_deepgemm_rejects_qat_before_hardware_validation(monkeypatch, parse_config):
+@pytest.mark.parametrize("fp8_moe", ["deepgemm_fp8", "aiter_fp8"])
+def test_fp8_moe_rejects_qat_before_hardware_validation(monkeypatch, parse_config, fp8_moe):
     from veomni.arguments import OpsImplementationConfig
     from veomni.arguments.parser import _instantiate_recursive
 
     # An invalid combination must report the config conflict even without CUDA.
     monkeypatch.setattr("veomni.utils.device.IS_CUDA_AVAILABLE", False)
-    values = {"moe_implementation": "deepgemm_fp8", "qat_implementation": "fp8_blockwise"}
-    with pytest.raises(ValueError, match="deepgemm_fp8.*cannot be combined.*fp8_blockwise") as error:
+    values = {"moe_implementation": fp8_moe, "qat_implementation": "fp8_blockwise"}
+    with pytest.raises(ValueError, match=f"{fp8_moe}.*cannot be combined.*fp8_blockwise") as error:
         if parse_config:
             _instantiate_recursive(OpsImplementationConfig, values)
         else:
@@ -122,6 +123,7 @@ def test_deepgemm_rejects_qat_before_hardware_validation(monkeypatch, parse_conf
     [
         {"moe_implementation": "deepgemm_fp8"},
         {"moe_implementation": "deepgemm_fp8", "qat_implementation": "none"},
+        {"moe_implementation": "aiter_fp8", "qat_implementation": "none"},
         {"moe_implementation": None, "qat_implementation": "fp8_blockwise"},
         {"moe_implementation": "eager", "qat_implementation": "fp8_blockwise"},
         {"moe_implementation": "fused_triton", "qat_implementation": "fp8_blockwise"},
